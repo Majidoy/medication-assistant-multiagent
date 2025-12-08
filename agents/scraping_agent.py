@@ -1,137 +1,81 @@
-# agents/scraping_agent.py
-
 import requests
-from bs4 import BeautifulSoup
 import json
 import os
-
+from time import sleep
 
 class ScrapingAgent:
-    def __init__(self, output_path="data/raw/"):
-        self.base_url = "https://www.nhs.uk/medicines/"
-        self.output_path = output_path
+    BASE_URL = "https://api.fda.gov/drug/label.json"
 
+    def __init__(self, output_path="data/raw/"):
+        self.output_path = output_path
         if not os.path.exists(output_path):
             os.makedirs(output_path)
 
-    # ----------------------------------------------------------------------
-    # MAIN SCRAPING LOGIC
-    # ----------------------------------------------------------------------
+    # ---------------------------------------------------------
+    # Fetch drug data from OpenFDA API
+    # ---------------------------------------------------------
+    def fetch_drugs(self, limit=10):
+        print("[OpenFDA] Fetching drug data...")
 
-    def scrape_all_medicines(self):
-        """
-        Scrapes the A-to-Z list of medicines from NHS.uk
-        and returns a dictionary of all scraped data.
-        """
-        print("[ScrapingAgent] Fetching list of medicines...")
-
-        index_url = self.base_url + "a-to-z/"
-        response = requests.get(index_url)
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Find medicine links
-        links = soup.select("ul.nhsuk-list li a")[:5]
-        print(f"[ScrapingAgent] Found {len(links)} medicines.")
-
-        all_data = {}
-
-        for idx, link in enumerate(links):
-            med_name = link.text.strip()
-            med_url = "https://www.nhs.uk" + link.get("href")
-
-            print(f"[{idx+1}/{len(links)}] Scraping {med_name}...")
-
-            data = self.scrape_medicine_page(med_url)
-            if data:
-                all_data[med_name] = data
-
-        return all_data
-
-    # ----------------------------------------------------------------------
-    # SCRAPING EACH MEDICINE PAGE
-    # ----------------------------------------------------------------------
-
-    def scrape_medicine_page(self, url):
-        """
-        Scrapes an individual NHS medicine page.
-        Extracts symptoms treated, side effects, and advice.
-        """
-        try:
-            response = requests.get(url, timeout=10)
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            return self.parse_nhs_medicine(soup)
-
-        except Exception as e:
-            print(f"[ScrapingAgent] Error scraping page: {e}")
-            return None
-
-    # ----------------------------------------------------------------------
-    # NHS PARSER
-    # ----------------------------------------------------------------------
-
-    def parse_nhs_medicine(self, soup):
-        """
-        Extracts clean structured information from an NHS medicine page.
-        """
-
-        data = {
-            "description": "",
-            "uses": [],
-            "side_effects": [],
-            "warnings": []
+        params = {
+            "limit": limit
         }
 
-        # DESCRIPTION
-        desc = soup.select_one("p.nhsuk-lede-text")
-        if desc:
-            data["description"] = desc.text.strip()
+        resp = requests.get(self.BASE_URL, params=params)
 
-        # EXTRACT ALL SECTIONS TITLES
-        sections = soup.select("h2.nhsuk-heading-l")
-
-        for sec in sections:
-            title = sec.text.strip().lower()
-
-            # USES / WHAT IS IT FOR?
-            if "used" in title or "what" in title:
-                data["uses"] = self._extract_bullet_list(sec)
-
-            # SIDE EFFECTS
-            if "side effect" in title:
-                data["side_effects"] = self._extract_bullet_list(sec)
-
-            # WARNINGS / WHO CAN TAKE
-            if "who can" in title or "not suitable" in title:
-                data["warnings"] = self._extract_bullet_list(sec)
-
-        return data
-
-    # ----------------------------------------------------------------------
-    # HELPERS
-    # ----------------------------------------------------------------------
-
-    def _extract_bullet_list(self, section_title):
-        """
-        Finds the <ul> list immediately after an <h2> section title.
-        Useful for extracting side effects, symptoms, etc.
-        """
-        ul = section_title.find_next("ul")
-        if not ul:
+        if resp.status_code != 200:
+            print("[OpenFDA] API Error:", resp.status_code)
             return []
-        return [li.text.strip() for li in ul.find_all("li")]
 
-    # ----------------------------------------------------------------------
-    # SAVE RESULTS
-    # ----------------------------------------------------------------------
+        data = resp.json()
 
-    def save_results(self, results, filename="nhs_scraped_data.json"):
-        """
-        Save scraped results to JSON.
-        """
+        drugs = data.get("results", [])
+        print(f"[OpenFDA] Retrieved {len(drugs)} drugs.")
+
+        return drugs
+
+    # ---------------------------------------------------------
+    # Parse FDA JSON for a single drug
+    # ---------------------------------------------------------
+    def parse_drug(self, drug_json):
+        # Extract fields, fallback to empty strings/lists
+        openfda = drug_json.get("openfda", {})
+
+        return {
+            "brand_name": openfda.get("brand_name", ["Unknown"])[0],
+            "generic_name": openfda.get("generic_name", ["Unknown"])[0],
+            "substance_name": openfda.get("substance_name", ["Unknown"])[0],
+            "purpose": drug_json.get("purpose", [""])[0] if "purpose" in drug_json else "",
+            "indications_and_usage": drug_json.get("indications_and_usage", [""])[0],
+            "warnings": drug_json.get("warnings", [""])[0],
+            "adverse_reactions": drug_json.get("adverse_reactions", [""])[0],
+            "dosage_and_administration": drug_json.get("dosage_and_administration", [""])[0],
+        }
+
+    # ---------------------------------------------------------
+    # Full scraping pipeline
+    # ---------------------------------------------------------
+    def scrape_all(self, limit=10):
+        drugs_json = self.fetch_drugs(limit)
+
+        parsed_data = {}
+
+        for idx, drug in enumerate(drugs_json):
+            parsed = self.parse_drug(drug)
+            name = parsed["brand_name"]
+            print(f"[{idx+1}/{len(drugs_json)}] Processed {name}")
+            parsed_data[name] = parsed
+            sleep(0.1)
+
+        return parsed_data
+
+    # ---------------------------------------------------------
+    # Save to JSON
+    # ---------------------------------------------------------
+    def save_results(self, results, filename="openfda_data.json"):
         path = os.path.join(self.output_path, filename)
+
         with open(path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=4, ensure_ascii=False)
 
-        print(f"[ScrapingAgent] Data saved to {path}")
-
+        print(f"[OpenFDA] Data saved to {path}")
