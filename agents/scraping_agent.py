@@ -1,81 +1,91 @@
 import requests
 import json
-import os
-from time import sleep
+import time
+from pathlib import Path
+
 
 class ScrapingAgent:
     BASE_URL = "https://api.fda.gov/drug/label.json"
 
-    def __init__(self, output_path="data/raw/"):
-        self.output_path = output_path
-        if not os.path.exists(output_path):
-            os.makedirs(output_path)
+    def __init__(self):
+        self.output_dir = Path("data/raw")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---------------------------------------------------------
-    # Fetch drug data from OpenFDA API
-    # ---------------------------------------------------------
-    def fetch_drugs(self, limit=10):
-        print("[OpenFDA] Fetching drug data...")
+    def _request(self, url, retries=5):
+        """Robust GET request with retry logic."""
+        for attempt in range(1, retries + 1):
+            try:
+                resp = requests.get(url, timeout=10)
+                print(f"[HTTP] Status: {resp.status_code}")
 
-        params = {
-            "limit": limit
-        }
+                if resp.status_code == 200:
+                    return resp.json()
 
-        resp = requests.get(self.BASE_URL, params=params)
+                time.sleep(attempt * 1.2)
 
-        if resp.status_code != 200:
-            print("[OpenFDA] API Error:", resp.status_code)
-            return []
+            except Exception as e:
+                print(f"[ERROR] {e}")
+                time.sleep(attempt * 1.2)
 
-        data = resp.json()
+        print("[ERROR] Failed after retries.")
+        return None
 
-        drugs = data.get("results", [])
-        print(f"[OpenFDA] Retrieved {len(drugs)} drugs.")
+    def fetch_paginated(self, target_total=500, batch_size=100):
+        """
+        Fetch approx `target_total` drugs using pagination.
+        """
+        print(f"[ScrapingAgent] Fetching ≈{target_total} drugs…")
 
-        return drugs
+        final_data = {}
+        skip = 0
 
-    # ---------------------------------------------------------
-    # Parse FDA JSON for a single drug
-    # ---------------------------------------------------------
-    def parse_drug(self, drug_json):
-        # Extract fields, fallback to empty strings/lists
-        openfda = drug_json.get("openfda", {})
+        while len(final_data) < target_total:
 
-        return {
-            "brand_name": openfda.get("brand_name", ["Unknown"])[0],
-            "generic_name": openfda.get("generic_name", ["Unknown"])[0],
-            "substance_name": openfda.get("substance_name", ["Unknown"])[0],
-            "purpose": drug_json.get("purpose", [""])[0] if "purpose" in drug_json else "",
-            "indications_and_usage": drug_json.get("indications_and_usage", [""])[0],
-            "warnings": drug_json.get("warnings", [""])[0],
-            "adverse_reactions": drug_json.get("adverse_reactions", [""])[0],
-            "dosage_and_administration": drug_json.get("dosage_and_administration", [""])[0],
-        }
+            print(f"\n[Batch] skip={skip}, current={len(final_data)}")
 
-    # ---------------------------------------------------------
-    # Full scraping pipeline
-    # ---------------------------------------------------------
-    def scrape_all(self, limit=10):
-        drugs_json = self.fetch_drugs(limit)
+            query = (
+                "search=purpose:*"     # take all categories for maximum variety
+            )
+            url = (
+                f"{self.BASE_URL}?{query}"
+                f"&limit={batch_size}&skip={skip}"
+            )
 
-        parsed_data = {}
+            data = self._request(url)
 
-        for idx, drug in enumerate(drugs_json):
-            parsed = self.parse_drug(drug)
-            name = parsed["brand_name"]
-            print(f"[{idx+1}/{len(drugs_json)}] Processed {name}")
-            parsed_data[name] = parsed
-            sleep(0.1)
+            if not data or "results" not in data or len(data["results"]) == 0:
+                print("[INFO] End of available OpenFDA results.")
+                break
 
-        return parsed_data
+            for entry in data["results"]:
+                brand = entry.get("openfda", {}).get("brand_name", ["UNKNOWN"])[0]
 
-    # ---------------------------------------------------------
-    # Save to JSON
-    # ---------------------------------------------------------
-    def save_results(self, results, filename="openfda_data.json"):
-        path = os.path.join(self.output_path, filename)
+                if brand == "UNKNOWN":
+                    continue
 
+                # add clean record
+                final_data[brand] = {
+                    "name": brand,
+                    "generic_name": entry.get("openfda", {}).get("generic_name", [""])[0],
+                    "substance_name": entry.get("openfda", {}).get("substance_name", [""])[0],
+                    "purpose": entry.get("purpose", [""])[0],
+                    "indications_and_usage": entry.get("indications_and_usage", [""])[0],
+                    "warnings": entry.get("warnings", [""])[0],
+                    "adverse_reactions": entry.get("adverse_reactions", [""])[0],
+                    "dosage_and_administration": entry.get("dosage_and_administration", [""])[0],
+                }
+
+                if len(final_data) >= target_total:
+                    break
+
+            skip += batch_size
+            time.sleep(1.3)      # avoid rate limiting
+
+        print(f"\n[ScrapingAgent] FINAL CLEAN COUNT: {len(final_data)}")
+        return final_data
+
+    def save(self, data, filename="openfda_500.json"):
+        path = self.output_dir / filename
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=4, ensure_ascii=False)
-
-        print(f"[OpenFDA] Data saved to {path}")
+            json.dump(data, f, indent=4)
+        print(f"[Saved] {path}")
