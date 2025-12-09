@@ -7,3 +7,5 @@ matplotlib
 pillow
 openai
 python-dotenv
+scikit-learn
+ultralytics
