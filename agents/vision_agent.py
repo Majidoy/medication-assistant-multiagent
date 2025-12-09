@@ -9,10 +9,6 @@ class VisionAgent:
     def __init__(self, model_path="models/yolo_best.pt", device="cpu"):
         """
         Initialize the vision agent with a YOLO model.
-
-        Args:
-            model_path (str): Path to best.pt trained model
-            device (str): "cpu" or "cuda"
         """
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"[VisionAgent] Model not found: {model_path}")
@@ -25,17 +21,7 @@ class VisionAgent:
     def predict(self, image_path):
         """
         Predict the medication name from an input image.
-
-        Args:
-            image_path (str): path to the image file
-
-        Returns:
-            dict containing:
-                - detected_name
-                - confidence
-                - raw results
         """
-
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"[VisionAgent] Image not found: {image_path}")
 
@@ -51,15 +37,22 @@ class VisionAgent:
         if len(result.boxes) == 0:
             return {"detected_name": None, "confidence": 0.0, "raw": results}
 
-        # Since your dataset has only ONE class, the predicted class is always index 0 ("drug-name")
         box = result.boxes[0]
         conf = float(box.conf[0])
 
         return {
-            "detected_name": "drug-name",
+            "detected_name": "drug-name",   # only 1 class in your dataset
             "confidence": conf,
             "raw": results
         }
+
+    
+    def detect(self, image_path):
+        """
+        Alias for GUI compatibility.
+        Tkinter calls detect(), so we map it to predict().
+        """
+        return self.predict(image_path)
 
     def save_prediction(self, image_path, out_path="vision_output.jpg"):
         """
