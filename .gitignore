@@ -12,8 +12,17 @@ venv/
 
 # Model files
 data/models/
+data/yolo/*
+!data/yolo/README.md
+
 
 # OS files
 .DS_Store
 Thumbs.db
+
+runs/
+runs_yolo/
+*.pt
+*.onnx
+*.pth
 
