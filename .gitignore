@@ -25,4 +25,4 @@ runs_yolo/
 *.pt
 *.onnx
 *.pth
-
+*.jpg
